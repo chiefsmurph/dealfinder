@@ -1,0 +1,20 @@
+{
+  "name": "dealfinder",
+  "version": "1.0.0",
+  "description": "finds deals on craigslist and ebay",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chiefsmurph/dealfinder.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/chiefsmurph/dealfinder/issues"
+  },
+  "homepage": "https://github.com/chiefsmurph/dealfinder#readme"
+}
