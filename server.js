@@ -7,7 +7,7 @@ var maxPageSearch = 3;
 function getPrices(searchQuery, sellPrice) {
   console.log('Searching for completed eBay listings for... "' + searchQuery + '" with expected sell price of ' + sellPrice);
   var allSellPrices = [];
-  var minSellPrice = sellPrice*.2;
+  var minSellPrice = sellPrice*.5;
 
   var finishedSearching = function() {
 
@@ -45,10 +45,15 @@ function getPrices(searchQuery, sellPrice) {
     var outlierFree = allSellPrices;
     console.log('removed ' + (allSellPrices.length - outlierFree.length) + ' from the sell prices');
 
-    var sum = outlierFree.reduce(function(a, b) { return a + b; });
-    var avg = sum / outlierFree.length;
-    console.log(JSON.stringify(outlierFree));
-    console.log('Average Sell Price: $' + avg);
+    console.log();
+    if (outlierFree.length) {
+      var sum = outlierFree.reduce(function(a, b) { return a + b; });
+      var avg = sum / outlierFree.length;
+      console.log(JSON.stringify(outlierFree));
+      console.log('Average Sell Price: $' + avg);
+    } else {
+      console.log('No sells found.')
+    }
 
   }
 
