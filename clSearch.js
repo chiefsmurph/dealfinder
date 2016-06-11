@@ -94,8 +94,11 @@ var getAllClUrlsForSearch = function(params, callback) {
 
         }), function() {
 
+          console.log('here');
           // save all new cl listings to mongo
           Listing.create(responseData, function(err) {
+
+            console.log('there');
 
             if (err) throw err;
 
