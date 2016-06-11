@@ -18,6 +18,10 @@
   },
   "homepage": "https://github.com/chiefsmurph/dealfinder#readme",
   "dependencies": {
-    "mongoose": "^4.4.20"
+    "async": "^1.5.2",
+    "cheerio": "^0.20.0",
+    "express": "^4.13.4",
+    "mongoose": "^4.4.20",
+    "request": "^2.72.0"
   }
 }
