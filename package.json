@@ -16,5 +16,8 @@
   "bugs": {
     "url": "https://github.com/chiefsmurph/dealfinder/issues"
   },
-  "homepage": "https://github.com/chiefsmurph/dealfinder#readme"
+  "homepage": "https://github.com/chiefsmurph/dealfinder#readme",
+  "dependencies": {
+    "mongoose": "^4.4.20"
+  }
 }
