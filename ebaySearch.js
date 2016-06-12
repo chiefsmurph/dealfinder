@@ -22,32 +22,55 @@ function getPrices(searchQuery, sellPrice, cb) {
       var avg = sum / outlierFree.length;
       // console.log(JSON.stringify(outlierFree));
       // console.log('Average Sell Price: $' + avg);
+      if (cb) cb({
+        avg: avg,
+        priceList: outlierFree
+      });
     } else {
       console.log('No sells found.')
+      if (cb) cb(null);
     }
-    if (cb) cb(avg || null);
+
 
   }
 
   var getPricesForPageX = function(num) {
-    var requestURL = 'http://www.ebay.com/sch/i.html?_from=R40&_sacat=0&LH_Complete=1&LH_Sold=1&_nkw=' + searchQuery + '&_udlo=' + minSellPrice + '&_pgn=' + num + '&_skc=100&rt=nc';
-    // console.log(requestURL);
+    var requestURL = 'http://www.ebay.com/sch/i.html?_from=R40&_sacat=0&LH_Complete=1&LH_Sold=1&_nkw=' + encodeURIComponent(searchQuery) + '&_udlo=' + minSellPrice + '&_pgn=' + num + '&_skc=100&rt=nc';
+    //console.log(requestURL);
 
     request(requestURL, function (error, response, html) {
       if (!error && response.statusCode == 200) {
         var $ = cheerio.load(html);
         var foundItems = 0;
-        $('span.bidsold').each(function(i, element){
-          var $el = $(this);
+        var forceEnd = false;
+
+        var addSpanToAllPrices = function($el) {
           var theVal = parseFloat($el.text().trim().substring(1).replace(/,/g, ''));
-          allSellPrices.push(theVal);
-          //console.log(theVal + ' on page ' + num);
-          foundItems++;
-        });
+          if (!isNaN(theVal)) {
+            allSellPrices.push(theVal);
+          }
+        };
+
+        if ($( ".lvresult:not(.sresult)" ).length) {
+          // not enough results starting to display unrelated stuff
+          var foundOnPage = [];
+          $( ".lvresult:not(.sresult)" ).prevAll().each(function() {
+            addSpanToAllPrices($(this).find('span.bidsold'));
+            foundItems++;
+          });
+          forceEnd = true;
+        } else {
+          // they are right there get them
+          $('span.bidsold').each(function(i, element){
+            addSpanToAllPrices($(this));
+            foundItems++;
+          });
+        }
+
 
         // console.log('found ' + foundItems + ' sold on page ' + num);
 
-        if (foundItems && num < maxPageSearch) {
+        if (foundItems && num < maxPageSearch && !forceEnd) {
           // RECURSIVE!!!
           getPricesForPageX(num+1);
         } else {
@@ -65,11 +88,11 @@ function getPrices(searchQuery, sellPrice, cb) {
 
 var sellPrice = 0;
 var args = process.argv.slice(2);
-console.log(JSON.stringify(args));
+// console.log(JSON.stringify(args));
 var lastArg = args.splice(-1, 1)[0];
-console.log(lastArg);
-
-getPrices(args.join(' '), lastArg);
+// console.log(lastArg);
+//
+// getPrices(args.join(' '), lastArg);
 
 module.exports = {
   getPrices: getPrices

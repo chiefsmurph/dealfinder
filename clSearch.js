@@ -3,9 +3,9 @@
 
 var request = require('request');
 var cheerio = require('cheerio');
+var throttledRequest = require('./throttledRequest.js');
 var async = require('async');
 var mongoose = require('mongoose');
-
 var ebaySearch = require('./ebaySearch.js');
 
 var db = mongoose.connect('mongodb://localhost/clListings');
@@ -26,26 +26,29 @@ var listingSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  ebaySellPrice: Number
+  ebaySellPrice: {
+    avg: Number,
+    priceList: [Number]
+  }
 });
 
 var Listing = db.model('listing', listingSchema);
-
-var newlisting = new Listing({
-  clId: 3432,
-  make: "hotdogs for cash",
-  ebaySellPrice: 23.50
-});
-
-newlisting.save(function(err) {
-  if (err) throw err;
-});
+//
+// var newlisting = new Listing({
+//   clId: 3432,
+//   make: "hotdogs for cash",
+//   ebaySellPrice: 23.50
+// });
+//
+// newlisting.save(function(err) {
+//   if (err) throw err;
+// });
 
 
 var saveAll = function( array, cb) {
-
-  console.log('saving');
-  console.log(array);
+  //
+  // console.log('saving');
+  // console.log(array);
   Listing.insertMany(array, cb);
 
   //
@@ -71,14 +74,15 @@ var getAllClUrlsForSearch = function(params, callback) {
 
   var getPage = function(x) {
 
-    console.log('checking out page ' + x);
+    // console.log('checking out page ' + x);
 
     var requestUrl = 'http://sfbay.craigslist.org/search/' + params.section + '?s=' + (x-1)*100 + '&sort=' + params.sortBy;
     if (params.min_price) requestUrl += '&min_price=' + params.min_price;
     if (params.max_price) requestUrl += '&max_price=' + params.max_price;
 
-    request(requestUrl, function (error, response, html) {
-      console.log('searching' + requestUrl);
+    console.log('searching ' + requestUrl);
+    throttledRequest(requestUrl, function (error, response, html) {
+
       if (!error && response.statusCode == 200) {
         var $ = cheerio.load(html);
         var allListings = [];
@@ -109,7 +113,7 @@ var getAllClUrlsForSearch = function(params, callback) {
             clId: curListing.clId
           }, function(err, obj) {
             if (err) throw err;
-            if (obj.length) {
+            if (obj.length && obj[0].searchedForMakeModel) {
               // listing already in mongo stop early
               //console.log('skipping something because we already found ', curListing);
               cb();
@@ -124,12 +128,12 @@ var getAllClUrlsForSearch = function(params, callback) {
         }, function() {
 
           if (responseData.length) {
-
-            console.log('here', JSON.stringify(responseData));
+            //
+            // console.log('here', JSON.stringify(responseData));
             // save all new cl listings to mongo
             saveAll(responseData, function(err) {
-
-              console.log('there');
+              //
+              // console.log('there');
 
               if (err) throw err;
 
@@ -164,11 +168,11 @@ var getAllClUrlsForSearch = function(params, callback) {
 
 var getModelFromPage = function(url, cb) {
   console.log('getting model from page');
-  request(url, function (error, response, html) {
+  throttledRequest(url, function (error, response, html) {
     if (!error && response.statusCode == 200) {
       var $ = cheerio.load(html);
       var model = $('span:contains("model name / number: ") b').text();
-      var make = $('span:contains("make / manufacturer: ") b').text();
+      var make = $('span:contains("make / manufacturer: ") b').text() || $('.attrgroup').eq(0).find('span').text();
       var price = $('.price').text();
       var obj = {
         model: model,
@@ -186,7 +190,7 @@ var getModelFromPage = function(url, cb) {
 
 
 var clListings;
-var thoseWithMakeAndModel = [];
+var thoseWithMakeOrModel = [];
 var theBestDeals = [];
 
 async.series([
@@ -203,14 +207,50 @@ async.series([
   //
   // },
   function(callback) {
+    Listing.aggregate(
+        { $match: {} }, // your find query
+        { $project: {
+            clId: 1,
+            price: 1,
+            ebaySellPrice: 1,
+            // actualEbay: { $cond: [ { $eq: ["$ebaySellPrice.avg", 0] }, 1, "$ebaySellPrice.avg"] }
+            ratio: { $divide: ['$ebaySellPrice.avg', '$price'] } // calculated field
+        } },
+        { $sort: { ratio: -1 } },
+        { $limit: 10 },
 
+        // And then the normal Mongoose stuff:
+        function (err, res) {
+          //console.log(res)
+          //console.log(err);
+
+          var displayListing = function(listing) {
+            console.log('listing', listing);
+            console.log(listing.name);
+            console.log('')
+          };
+
+          async.forEachSeries(res, function(partialListing, cb) {
+            Listing.findById(partialListing._id, function(err, res) {
+              displayListing(res);
+              //console.log('res',res);
+              cb();
+            });
+          }, callback);
+
+        }
+    );
+  },
+  function(callback) {
+
+    console.log('looking for new listings that we havent found in the past...')
     // get the urls of all the listings for this search...
     getAllClUrlsForSearch({
-      section: 'ela',
+      section: 'moa',
+      // sortBy: 'priceasc',
       numPages: 1,
-      min_price: 303,
-      max_price: 320,
-      sortBy: 'priceasc'
+      min_price: 600,
+      max_price: 1000,
     }, function(clResults) {
       clListings = clResults;
       callback();
@@ -233,8 +273,8 @@ async.series([
 
             var allTheGoodStuff = Object.assign(listing, data);
 
-            if (allTheGoodStuff.make.length > 1 && allTheGoodStuff.model.length > 1) {
-              thoseWithMakeAndModel.push(allTheGoodStuff);
+            if (allTheGoodStuff.make.length > 1 || allTheGoodStuff.model.length > 1) {
+              thoseWithMakeOrModel.push(allTheGoodStuff);
             }
 
             console.log(allTheGoodStuff);
@@ -256,21 +296,31 @@ async.series([
   },
   function(callback) {
 
-    if (thoseWithMakeAndModel) {
+    if (thoseWithMakeOrModel) {
       console.log('...');
-      console.log('these were the ones with make / model...');
+      console.log('these were the ones with make / model...' + thoseWithMakeOrModel.length + ' total');
 
-      console.log(thoseWithMakeAndModel);
+      console.log(thoseWithMakeOrModel);
 
-      async.forEachSeries(thoseWithMakeAndModel, function(listing, cb) {
+      var makeCount = 0;
+
+      async.forEachSeries(thoseWithMakeOrModel, function(listing, cb) {
         var searchQuery = listing.make + ' ' + listing.model;
-        ebaySearch.getPrices(searchQuery, listing.price, function(avgSellPrice) {
+        ebaySearch.getPrices(searchQuery, listing.price, function(ebayResults) {
+
+          makeCount++;
+
+          var avg = (ebayResults) ? Math.round(ebayResults.avg * 100) / 100 : 0;
+          console.log(makeCount + ' / ' + thoseWithMakeOrModel.length);
           console.log(searchQuery);
-          console.log('ebay: ' + avgSellPrice);
+          console.log('ebay: ' + avg);
           console.log('selling on cl at ' + listing.price);
           console.log('');
           var ebayObj = {
-            ebaySellPrice: Math.round(avgSellPrice * 100) / 100
+            ebaySellPrice: {
+              avg: avg,
+              priceList: (ebayResults) ? ebayResults.priceList : []
+            }
           };
           Listing.update({
             clId: listing.clId
@@ -279,9 +329,9 @@ async.series([
             cb();
           });
 
-          var perc = avgSellPrice / listing.price;
+          var perc = avg / listing.price;
 
-          if ( perc <  0.9 ) {
+          if ( perc >  1.1 ) {
             theBestDeals.push(Object.assign(listing, ebayObj));
           }
         });
@@ -300,7 +350,14 @@ async.series([
     console.log('THE BEST DEALS...');
     console.log('craigslist low, ebay high\n');
 
-    console.log(theBestDeals);
+    theBestDeals.sort(function(a, b) {
+      return a.ebaySellPrice.avg / a.price > b.ebaySellPrice.avg / b.price;
+    });
+
+    console.log(JSON.stringify(theBestDeals, null, 3));
+
+
+    callback();
 
   }
 ], function() {
@@ -310,4 +367,5 @@ async.series([
 
 
   console.log('finished running');
+  process.exit();
 });
