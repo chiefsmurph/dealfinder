@@ -1,0 +1,316 @@
+<html>
+<head>
+  <title>Dealfinder 1.0</title>
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.6.3/css/font-awesome.min.css">
+  <style>
+  html {
+    /*overflow: hidden;*/
+  }
+  body {
+    font-family: sans-serif;
+    font-size: 110%;
+    height: 100%;
+  }
+  html,
+  body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+  #topBar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100px;
+    width: 100%;
+    background-color: lightgray;
+    position: fixed;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  #topBar select {
+    zoom: 200%;
+  }
+  #topBar button {
+    zoom: 120%;
+    margin-left: 10px;
+  }
+  #content {
+    padding: 2%;
+    position: absolute;
+    top: 100px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: scroll;
+  }
+  .pic {
+    float: left;
+    margin-right: 10px;
+    max-width: 300px;
+    max-height: 300px;
+    margin-bottom: 20px;
+  }
+  .listing {
+    clear: left;
+    margin-bottom: 20px;
+  }
+  #searchPanel {
+    display: none;
+    position: absolute;
+    top: 15%;
+    left: 15%;
+    width: 70%;
+    padding-bottom: 5px;
+    border: 2px solid black;
+    background-color: yellow;
+    text-align: center;
+    border-radius: 5px 5px 0 0;
+  }
+  #searchPanel td {
+    padding: 3px;
+  }
+  #searchPanel table {
+    width: 100%
+  }
+  #searchPanel textarea {
+    width: 99%;
+    height: 400px;
+    margin: auto;
+  }
+  #searchPanel input[type="submit"] {
+    zoom: 200%;
+  }
+  </style>
+  <script>
+  if (!Date.now) {
+      Date.now = function() { return new Date().getTime(); }
+  }
+
+  function displayListings (res, header) {
+    console.log(res, header);
+
+    var displayText = (header) ? '<h2>' + header + '</h2>' : '';
+
+    if (!res.length) {
+      displayText += 'No listings found.';
+      $('#content').html(displayText);
+      return;
+    }
+
+    res.forEach(function(listing) {
+      displayText += "<div class='listing'>"
+      if (listing.pics.length) {
+        displayText += '<img src="' + listing.pics[0] + '" class="pic">'
+      }
+      for (var key in listing) {
+        if (key != "price" && listing[key] && typeof listing[key] != "object") {
+          displayText += listing[key] + '<br>';
+        }
+      }
+      displayText += "selling on cl for " + listing.price;
+      if (listing.ebaySellPrice && listing.ebaySellPrice.avg) {
+        displayText += ' and on ebay for ' + listing.ebaySellPrice.avg;
+      }
+      displayText += '</div>';
+    });
+
+    $('#content').html(displayText);
+  }
+
+  function r(f){/in/.test(document.readyState)?setTimeout(r,9,f):f()}
+  r(function(){
+
+    // ready
+    var socket = io.connect(window.location.hostname + ":" + window.location.port);
+    socket.on('bestDealsInSection', function(data) {
+      // alert(JSON.stringify(res));
+      console.log('received best deals in section ')
+      displayListings(data.deals, 'these are the best deals we found in section ' + data.sec);
+    });
+
+    socket.on('info', function(data) {
+      $('textarea').append(data + '\n');
+      $('textarea').scrollTop($('textarea')[0].scrollHeight);
+    });
+
+    socket.on('theBestDeals', function(data) {
+      var doIt = function() {
+        displayListings(data, 'here are the best listings we found for that search...');
+      };
+      if ($('#searchPanel').is(":visible")) {
+        setTimeout(function() {
+          $('#searchPanel').fadeOut('slow', doIt);
+        }, 1000);
+      } else {
+        doIt();
+      }
+    });
+
+    $('#category').on('change', function() {
+      var section = $(this).val();
+      console.log('getting best deals in ' + section);
+      socket.emit('getBestDealsInSection', section);
+    });
+
+    $('#searchButton').on('click', function() {
+      $('#searchPanel').show();
+    });
+
+    $('#startsearchbtn').on('click', function() {
+      var queryParams = {
+        query: $('#querystring').val(),
+        section: $('#searchCat').val(),
+        min_price: parseInt($('#min').val()),
+        max_price: parseInt($('#max').val()),
+        numPages: parseInt($('#numPages').val())
+      };
+      socket.emit('queryCl', queryParams);
+      console.log(queryParams);
+    });
+
+  });
+
+  </script>
+</head>
+<body>
+  <div id="container">
+    <div id="topBar">
+
+      <select id="category">
+        <option value='---'>---</option>
+        <option value="sss">all</option>
+        <option value="ata">antiques</option>
+        <option value="ppa">appliances</option>
+        <option value="ara">arts+crafts</option>
+        <option value="sna">atvs/utvs/snow</option>
+        <option value="pta">auto parts</option>
+        <option value="wta">auto wheels &amp; tires</option>
+        <option value="baa">baby+kids</option>
+        <option value="bar">barter</option>
+        <option value="haa">beauty+hlth</option>
+        <option value="bip">bike parts</option>
+        <option value="bia">bikes</option>
+        <option value="bpa">boat parts</option>
+        <option value="boo">boats</option>
+        <option value="bka">books</option>
+        <option value="bfa">business</option>
+        <option value="cta">cars+trucks</option>
+        <option value="ema">cds/dvd/vhs</option>
+        <option value="moa">cell phones</option>
+        <option value="cla">clothes+acc</option>
+        <option value="cba">collectibles</option>
+        <option value="syp">computer parts</option>
+        <option value="sya">computers</option>
+        <option value="ela">electronics</option>
+        <option value="gra">farm+garden</option>
+        <option value="zip">free stuff</option>
+        <option value="fua">furniture</option>
+        <option value="gms">garage sales</option>
+        <option value="foa">general</option>
+        <option value="hva">heavy equipment</option>
+        <option value="hsa">household</option>
+        <option value="jwa">jewelry</option>
+        <option value="maa">materials</option>
+        <option value="mpa">motorcycle parts</option>
+        <option value="mca">motorcycles</option>
+        <option value="msa">music instr</option>
+        <option value="pha">photo+video</option>
+        <option value="rva">RVs</option>
+        <option value="sga">sporting</option>
+        <option value="tia">tickets</option>
+        <option value="tla">tools</option>
+        <option value="taa">toys+games</option>
+        <option value="vga">video gaming</option>
+        <option value="waa">wanted</option>
+      </select>
+
+      <button id="searchButton"><i class="fa fa-plus" aria-hidden="true">New search</i></button>
+
+    </div>
+    <div id="content"></div>
+  </div>
+
+  <div id='searchPanel'>
+
+    <table>
+      <tr>
+        <td>Querystring</td>
+        <td><input type="text" id="querystring"></td>
+      </tr>
+      <tr>
+        <td width="30%">Section</td>
+        <td width="40%">
+          <select id="searchCat">
+            <option value='---'>---</option>
+            <option value="sss">all</option>
+            <option value="ata">antiques</option>
+            <option value="ppa">appliances</option>
+            <option value="ara">arts+crafts</option>
+            <option value="sna">atvs/utvs/snow</option>
+            <option value="pta">auto parts</option>
+            <option value="wta">auto wheels &amp; tires</option>
+            <option value="baa">baby+kids</option>
+            <option value="bar">barter</option>
+            <option value="haa">beauty+hlth</option>
+            <option value="bip">bike parts</option>
+            <option value="bia">bikes</option>
+            <option value="bpa">boat parts</option>
+            <option value="boo">boats</option>
+            <option value="bka">books</option>
+            <option value="bfa">business</option>
+            <option value="cta">cars+trucks</option>
+            <option value="ema">cds/dvd/vhs</option>
+            <option value="moa">cell phones</option>
+            <option value="cla">clothes+acc</option>
+            <option value="cba">collectibles</option>
+            <option value="syp">computer parts</option>
+            <option value="sya">computers</option>
+            <option value="ela">electronics</option>
+            <option value="gra">farm+garden</option>
+            <option value="zip">free stuff</option>
+            <option value="fua">furniture</option>
+            <option value="gms">garage sales</option>
+            <option value="foa">general</option>
+            <option value="hva">heavy equipment</option>
+            <option value="hsa">household</option>
+            <option value="jwa">jewelry</option>
+            <option value="maa">materials</option>
+            <option value="mpa">motorcycle parts</option>
+            <option value="mca">motorcycles</option>
+            <option value="msa">music instr</option>
+            <option value="pha">photo+video</option>
+            <option value="rva">RVs</option>
+            <option value="sga">sporting</option>
+            <option value="tia">tickets</option>
+            <option value="tla">tools</option>
+            <option value="taa">toys+games</option>
+            <option value="vga">video gaming</option>
+            <option value="waa">wanted</option>
+          </select>
+        </td>
+        <td rowspan="4">
+          <input type="submit" value="start search!" id="startsearchbtn">
+        </td>
+      </tr>
+      <tr>
+        <td>Min</td>
+        <td><input type="text" id="min"></td>
+      </tr>
+      <tr>
+        <td>Max</td>
+        <td><input type="text" id="max"></td>
+      </tr>
+      <tr>
+        <td>Num Pages</td>
+        <td><input type="range" min="1" max="7" value="1" id="numPages"></td>
+      </tr>
+    </table>
+    <textarea></textarea>
+  </div>
+  <!-- javascript includes -->
+  <script src="https://cdn.socket.io/socket.io-1.3.5.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
+</body>
+</html>

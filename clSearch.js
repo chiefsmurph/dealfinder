@@ -3,36 +3,14 @@
 
 var request = require('request');
 var cheerio = require('cheerio');
-var throttledRequest = require('./throttledRequest.js');
+var throttledRequest = require('./throttledRequest');
 var async = require('async');
 var mongoose = require('mongoose');
-var ebaySearch = require('./ebaySearch.js');
+var ebaySearch = require('./ebaySearch');
 
 var db = mongoose.connect('mongodb://localhost/clListings');
 
-var listingSchema = new mongoose.Schema({
-  clId: {
-    type: Number,
-    set: function (v) {
-      return Math.round(v);
-    }
-  },
-  url: String,
-  price: Number,
-  title: String,
-  make: String,
-  model: String,
-  searchedForMakeModel: {
-    type: Boolean,
-    default: false
-  },
-  ebaySellPrice: {
-    avg: Number,
-    priceList: [Number]
-  }
-});
-
-var Listing = db.model('listing', listingSchema);
+var Listing = require('./models/listing');
 //
 // var newlisting = new Listing({
 //   clId: 3432,
@@ -45,147 +23,36 @@ var Listing = db.model('listing', listingSchema);
 // });
 
 
-var saveAll = function( array, cb) {
-  //
-  // console.log('saving');
-  // console.log(array);
-  Listing.insertMany(array, cb);
+var displayListing = function(listing) {
 
-  //
-  // async.forEachSeries(array, function(obj, callback) {
-  //   var newListing = new Listing(obj);
-  //   newlisting.save(function(err, hm) {
-  //     if (err) cb(err);
-  //     console.log(hm);
-  //     callback();
-  //   });
-  // }, cb);
+  var displayParam = function(p) {
+    try {
+      if (listing[p]) {
+        console.log(listing[p]);
+      }
+    } catch(e) {
+      console.log('nice try');
+      throw e;
+    }
+  };
+  ['title', 'url', 'make', 'model', 'ratio', 'dealQuality'].forEach(displayParam);
+
+  // console.log(JSON.stringify(listing, null, ' '));
+  var logText = 'selling on cl for ' + listing.price;
+  if (listing.ebaySellPrice && listing.ebaySellPrice.avg) {
+    logText += ' and on ebay for ' + listing.ebaySellPrice.avg;
+
+    var ratio = Math.round(listing.ebaySellPrice.avg / listing.price * 100) / 100;
+    logText += '\nratio: ' + ratio + ' ... potential profit: $' + (listing.ebaySellPrice.avg - listing.price);
+    if (ratio > 1.5) {
+      logText += '\n*** HOT HOT HOT ***'
+    }
+  }
+  console.log(logText);
+
+  console.log();
 
 };
-
-// http://sfbay.craigslist.org/search/sss?sort=date
-var getAllClUrlsForSearch = function(params, callback) {
-  if (!params.section) params.section = 'sss';
-  if (!params.sortBy) params.sortBy = 'date';
-  if (!params.numPages) params.numPages = 5;
-
-
-  var responseData = [];
-
-  var getPage = function(x) {
-
-    // console.log('checking out page ' + x);
-
-    var requestUrl = 'http://sfbay.craigslist.org/search/' + params.section + '?s=' + (x-1)*100 + '&sort=' + params.sortBy;
-    if (params.min_price) requestUrl += '&min_price=' + params.min_price;
-    if (params.max_price) requestUrl += '&max_price=' + params.max_price;
-
-    console.log('searching ' + requestUrl);
-    throttledRequest(requestUrl, function (error, response, html) {
-
-      if (!error && response.statusCode == 200) {
-        var $ = cheerio.load(html);
-        var allListings = [];
-
-        $('.hdrlnk').each(function(i, el) {
-          var $el = $(this);
-          var urlPath = $el.attr('href');
-
-          if (urlPath.substring(1, 2) === '/') {
-            // if from out of this area stop looking for more
-            return false;
-          }
-
-          var obj = {
-            title: $(this).children('span').text(),
-            url: 'http://sfbay.craigslist.org' + urlPath,
-            clId: Number($(this).data('id'))
-          };
-
-          allListings.push(obj);
-
-        });
-
-        async.forEachSeries(allListings, function(curListing, cb) {
-
-          // console.log('looking for ' + JSON.stringify(curListing.clId));
-          Listing.find({
-            clId: curListing.clId
-          }, function(err, obj) {
-            if (err) throw err;
-            if (obj.length && obj[0].searchedForMakeModel) {
-              // listing already in mongo stop early
-              //console.log('skipping something because we already found ', curListing);
-              cb();
-            } else {
-              // listing has not been found yet
-              // console.log('nah');
-              responseData.push(curListing);
-              cb();
-            }
-          });
-
-        }, function() {
-
-          if (responseData.length) {
-            //
-            // console.log('here', JSON.stringify(responseData));
-            // save all new cl listings to mongo
-            saveAll(responseData, function(err) {
-              //
-              // console.log('there');
-
-              if (err) throw err;
-
-              if (x === params.numPages) {
-                // finished
-                callback(responseData);
-              } else {
-                // move to next page
-                getPage(x + 1);
-              }
-
-            });
-
-          } else {
-            callback(null);
-          }
-
-        });
-
-      }
-    });
-
-  };
-
-  getPage(1);
-
-}
-
-
-
-
-
-var getModelFromPage = function(url, cb) {
-  console.log('getting model from page');
-  throttledRequest(url, function (error, response, html) {
-    if (!error && response.statusCode == 200) {
-      var $ = cheerio.load(html);
-      var model = $('span:contains("model name / number: ") b').text();
-      var make = $('span:contains("make / manufacturer: ") b').text() || $('.attrgroup').eq(0).find('span').text();
-      var price = $('.price').text();
-      var obj = {
-        model: model,
-        make: make,
-        price: price
-      };
-      // console.log(obj);
-      cb(obj);
-    }
-  });
-}
-
-
 
 
 
@@ -198,7 +65,7 @@ async.series([
   //
   //   async.forEachSeries(['http://sfbay.craigslist.org/sby/eld/5629086342.html', 'http://sfbay.craigslist.org/eby/ele/5629172209.html'], function(url, cb) {
   //
-  //     getModelFromPage(url, function(data) {
+  //     getListingDetails(url, function(data) {
   //         console.log(data);
   //         cb();
   //     });
@@ -207,50 +74,50 @@ async.series([
   //
   // },
   function(callback) {
-    Listing.aggregate(
-        { $match: {} }, // your find query
-        { $project: {
-            clId: 1,
-            price: 1,
-            ebaySellPrice: 1,
-            // actualEbay: { $cond: [ { $eq: ["$ebaySellPrice.avg", 0] }, 1, "$ebaySellPrice.avg"] }
-            ratio: { $divide: ['$ebaySellPrice.avg', '$price'] } // calculated field
-        } },
-        { $sort: { ratio: -1 } },
-        { $limit: 10 },
 
-        // And then the normal Mongoose stuff:
-        function (err, res) {
-          //console.log(res)
-          //console.log(err);
+    (function displayBestDealsInSection(sec) {
 
-          var displayListing = function(listing) {
-            console.log('listing', listing);
-            console.log(listing.name);
-            console.log('')
-          };
+      Listing.aggregate(
+          { $match: { "url": { "$regex": sec, "$options": "i" }  } }, // your find query
+          { $project: {
+              clId: 1,
+              price: 1,
+              ebaySellPrice: 1,
+              // actualEbay: { $cond: [ { $eq: ["$ebaySellPrice.avg", 0] }, 1, "$ebaySellPrice.avg"] }
+              ratio: { $divide: ['$ebaySellPrice.avg', '$price'] } // calculated field
+          } },
+          { $sort: { ratio: -1 } },
+          { $limit: 80 },
 
-          async.forEachSeries(res, function(partialListing, cb) {
-            Listing.findById(partialListing._id, function(err, res) {
-              displayListing(res);
-              //console.log('res',res);
-              cb();
-            });
-          }, callback);
+          // And then the normal Mongoose stuff:
+          function (err, res) {
+            // console.log(res)
+            // console.log(err);
 
-        }
-    );
+            async.forEachSeries(res, function(partialListing, cb) {
+              Listing.findById(partialListing._id, function(err, res) {
+                displayListing(res);
+                // console.log('res',res);
+                cb();
+              });
+            }, callback);
+
+          }
+      );
+    })("cto")
+
   },
   function(callback) {
 
     console.log('looking for new listings that we havent found in the past...')
     // get the urls of all the listings for this search...
-    getAllClUrlsForSearch({
-      section: 'moa',
+    importantFns.getAllClUrlsForSearch({
+      //query: 'honda',
+      section: 'cta',
       // sortBy: 'priceasc',
       numPages: 1,
-      min_price: 600,
-      max_price: 1000,
+      min_price: 1300,
+      max_price: 1306,
     }, function(clResults) {
       clListings = clResults;
       callback();
@@ -258,89 +125,115 @@ async.series([
 
   },
   function(callback) {
-    if (clListings) {
 
-      console.log();
-      console.log('found ' + clListings.length + ' new listings...');
-      // take those url's and then get the make. model and price of all those listings
-      var listingCount = 0;
-      async.forEachSeries(clListings, function(listing, cb) {
-        getModelFromPage(listing.url, function(data) {
-            listingCount++;
-            console.log('checking out listing ' + listingCount + ' of ' + clListings.length);
-            data.price = data.price.substring(1); // remove $ sign
-            data.searchedForMakeModel = true;
+    Listing.find({
+      searchedForMakeModel: false
+    }, function(err, res) {
+      clListings = res;
 
-            var allTheGoodStuff = Object.assign(listing, data);
+      // get all listings that have not been searched on ebay
+      if (clListings) {
 
-            if (allTheGoodStuff.make.length > 1 || allTheGoodStuff.model.length > 1) {
-              thoseWithMakeOrModel.push(allTheGoodStuff);
-            }
+        console.log();
+        console.log('found ' + clListings.length + ' listings that need to be searched for make / model...');
+        // take those url's and then get the make. model and price of all those listings
+        var listingCount = 0;
+        async.forEachSeries(clListings, function(listing, cb) {
 
-            console.log(allTheGoodStuff);
-            console.log();
+          listingCount++;
+          console.log('checking out listing ' + listingCount + ' of ' + clListings.length + ': ' + listing.title);
+          importantFns.getListingDetails(listing.url, function(data) {
 
-            Listing.update({
-              clId: listing.clId
-            }, data, function(err) {
-              if (err) throw err;
+              var allTheGoodStuff = Object.assign(listing, data);
+
+              if (allTheGoodStuff.make.length > 1 || allTheGoodStuff.model.length > 1) {
+                thoseWithMakeOrModel.push(allTheGoodStuff);
+              }
+
+              // console.log(allTheGoodStuff);
+              // console.log();
               cb();
-            })
+          });
+        }, callback);
+      } else {
+        console.log('no new listings found since last search');
+        callback();
+      }
 
-        });
-      }, callback);
-    } else {
-      console.log('no new listings found since last search');
-      callback();
-    }
+    });
+
   },
   function(callback) {
 
-    if (thoseWithMakeOrModel) {
-      console.log('...');
-      console.log('these were the ones with make / model...' + thoseWithMakeOrModel.length + ' total');
+    // find all listings where the make and model are set and the ebay price has not been calculated
+    Listing.find({
+      "ebaySellPrice.avg": {
+        "$exists": false
+      },
+      $or: [
+        {
+          make: { "$exists": true },
+          $where: "this.make.length > 1"
+        },
+        {
+          model: { "$exists": true },
+          $where: "this.model.length > 1"
+        }
+      ]
+    }, function(err, res) {
 
-      console.log(thoseWithMakeOrModel);
+      thoseWithMakeOrModel = res;
 
-      var makeCount = 0;
+      if (thoseWithMakeOrModel) {
+        console.log('...');
+        console.log('there are ' + thoseWithMakeOrModel.length + ' that need to be searched on ebay');
 
-      async.forEachSeries(thoseWithMakeOrModel, function(listing, cb) {
-        var searchQuery = listing.make + ' ' + listing.model;
-        ebaySearch.getPrices(searchQuery, listing.price, function(ebayResults) {
+        var makeCount = 0;
 
-          makeCount++;
+        async.forEachSeries(thoseWithMakeOrModel, function(listing, cb) {
+          var searchQuery = (listing.make + ' ' + listing.model).trim();
+          if (searchQuery.indexOf('condition') !== -1) {
+            searchQuery = listing.name;
+          }
+          ebaySearch.getPrices(searchQuery, listing.price, function(ebayResults) {
 
-          var avg = (ebayResults) ? Math.round(ebayResults.avg * 100) / 100 : 0;
-          console.log(makeCount + ' / ' + thoseWithMakeOrModel.length);
-          console.log(searchQuery);
-          console.log('ebay: ' + avg);
-          console.log('selling on cl at ' + listing.price);
-          console.log('');
-          var ebayObj = {
-            ebaySellPrice: {
-              avg: avg,
-              priceList: (ebayResults) ? ebayResults.priceList : []
+            makeCount++;
+
+            var avg = (ebayResults) ? Math.round(ebayResults.avg * 100) / 100 : 0;
+            console.log(makeCount + ' / ' + thoseWithMakeOrModel.length);
+            console.log(searchQuery);
+            console.log('ebay: ' + avg);
+            console.log('selling on cl at ' + listing.price);
+            console.log('');
+            var ebayObj = {
+              ebaySellPrice: {
+                avg: avg,
+                priceList: (ebayResults) ? ebayResults.priceList : []
+              }
+            };
+            Listing.update({
+              clId: listing.clId
+            }, ebayObj, function(err) {
+              if (err) throw err;
+              cb();
+            });
+
+            var perc = avg / listing.price;
+
+            if ( perc >  1.1 ) {
+              theBestDeals.push(Object.assign(listing, ebayObj));
             }
-          };
-          Listing.update({
-            clId: listing.clId
-          }, ebayObj, function(err) {
-            if (err) throw err;
-            cb();
           });
 
-          var perc = avg / listing.price;
+        }, callback);
 
-          if ( perc >  1.1 ) {
-            theBestDeals.push(Object.assign(listing, ebayObj));
-          }
-        });
+      } else {
+        console.log('there are no listings that need to be searched on ebay');
+        callback();
+      }
 
-      }, callback);
+    });
 
-    } else {
-      callback();
-    }
 
   },
   function(callback) {
@@ -350,12 +243,24 @@ async.series([
     console.log('THE BEST DEALS...');
     console.log('craigslist low, ebay high\n');
 
-    theBestDeals.sort(function(a, b) {
-      return a.ebaySellPrice.avg / a.price > b.ebaySellPrice.avg / b.price;
-    });
+    var getDealQuality = function(deal) {
+      var returnVal = 0;
+      returnVal += 10 * Math.round(deal.ratio);
+      if (deal.ebaySellPrice.avg - deal.price) {
+        returnVal += 100;
+      }
+      return returnVal;
+    };
 
-    console.log(JSON.stringify(theBestDeals, null, 3));
-
+    theBestDeals.map(function(deal) {
+      var ratio = deal.ebaySellPrice.avg / deal.price;
+      var deal = Object.assign(deal, ratio);
+      return Object.assign(deal, {
+        dealQuality: getDealQuality(deal)
+      });
+    }).sort(function(a, b) {
+      return parseFloat(b.ratio) > parseFloat(a.ratio);
+    }).forEach(displayListing);
 
     callback();
 

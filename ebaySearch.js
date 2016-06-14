@@ -2,6 +2,7 @@ var request = require('request');
 var cheerio = require('cheerio');
 var async = require('async');
 var dataFilters = require('./dataFilters.js');
+var throttledRequest = require('./throttledRequest');
 
 var maxPageSearch = 3;
 
@@ -27,7 +28,7 @@ function getPrices(searchQuery, sellPrice, cb) {
         priceList: outlierFree
       });
     } else {
-      console.log('No sells found.')
+      // console.log('No sells found.')
       if (cb) cb(null);
     }
 
@@ -38,7 +39,7 @@ function getPrices(searchQuery, sellPrice, cb) {
     var requestURL = 'http://www.ebay.com/sch/i.html?_from=R40&_sacat=0&LH_Complete=1&LH_Sold=1&_nkw=' + encodeURIComponent(searchQuery) + '&_udlo=' + minSellPrice + '&_pgn=' + num + '&_skc=100&rt=nc';
     //console.log(requestURL);
 
-    request(requestURL, function (error, response, html) {
+    throttledRequest(requestURL, function (error, response, html) {
       if (!error && response.statusCode == 200) {
         var $ = cheerio.load(html);
         var foundItems = 0;
