@@ -143,6 +143,7 @@ async.series([
           listingCount++;
           console.log('checking out listing ' + listingCount + ' of ' + clListings.length + ': ' + listing.title);
           importantFns.getListingDetails(listing.url, function(data) {
+            if (data.make) {
 
               var allTheGoodStuff = Object.assign(listing, data);
 
@@ -153,6 +154,8 @@ async.series([
               // console.log(allTheGoodStuff);
               // console.log();
               cb();
+
+            }
           });
         }, callback);
       } else {
@@ -165,74 +168,7 @@ async.series([
   },
   function(callback) {
 
-    // find all listings where the make and model are set and the ebay price has not been calculated
-    Listing.find({
-      "ebaySellPrice.avg": {
-        "$exists": false
-      },
-      $or: [
-        {
-          make: { "$exists": true },
-          $where: "this.make.length > 1"
-        },
-        {
-          model: { "$exists": true },
-          $where: "this.model.length > 1"
-        }
-      ]
-    }, function(err, res) {
 
-      thoseWithMakeOrModel = res;
-
-      if (thoseWithMakeOrModel) {
-        console.log('...');
-        console.log('there are ' + thoseWithMakeOrModel.length + ' that need to be searched on ebay');
-
-        var makeCount = 0;
-
-        async.forEachSeries(thoseWithMakeOrModel, function(listing, cb) {
-          var searchQuery = (listing.make + ' ' + listing.model).trim();
-          if (searchQuery.indexOf('condition') !== -1) {
-            searchQuery = listing.name;
-          }
-          ebaySearch.getPrices(searchQuery, listing.price, function(ebayResults) {
-
-            makeCount++;
-
-            var avg = (ebayResults) ? Math.round(ebayResults.avg * 100) / 100 : 0;
-            console.log(makeCount + ' / ' + thoseWithMakeOrModel.length);
-            console.log(searchQuery);
-            console.log('ebay: ' + avg);
-            console.log('selling on cl at ' + listing.price);
-            console.log('');
-            var ebayObj = {
-              ebaySellPrice: {
-                avg: avg,
-                priceList: (ebayResults) ? ebayResults.priceList : []
-              }
-            };
-            Listing.update({
-              clId: listing.clId
-            }, ebayObj, function(err) {
-              if (err) throw err;
-              cb();
-            });
-
-            var perc = avg / listing.price;
-
-            if ( perc >  1.1 ) {
-              theBestDeals.push(Object.assign(listing, ebayObj));
-            }
-          });
-
-        }, callback);
-
-      } else {
-        console.log('there are no listings that need to be searched on ebay');
-        callback();
-      }
-
-    });
 
 
   },

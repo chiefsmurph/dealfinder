@@ -1,11 +1,6 @@
 var mongoose = require('mongoose');
 var listingSchema = new mongoose.Schema({
-  clId: {
-    type: Number,
-    set: function (v) {
-      return Math.round(v);
-    }
-  },
+  clId: Number,
   url: String,
   price: Number,
   title: String,
@@ -13,6 +8,11 @@ var listingSchema = new mongoose.Schema({
   model: String,
   sec: String,
   pics: [String],
+  query: String,
+  ignore: {
+    type: Boolean,
+    default: false
+  },
   searchedForMakeModel: {
     type: Boolean,
     default: false

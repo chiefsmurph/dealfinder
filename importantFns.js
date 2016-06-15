@@ -8,36 +8,55 @@ var saveAll = function( array, cb) {
   Listing.insertMany(array, cb);
 };
 
-function getBestDealsInSection(sec, callback) {
+throttledRequest('http://www.craigslist.org/', function(err, response, html) {
+  console.log(err, html);
+});
+
+function getBestDealsInSection(search, callback) {
+  var priceObj = {$exists: true};
+  priceObj['$gt'] = search.min || 1;
+  if (search.max) priceObj['$lt'] = search.max;
+  console.log(priceObj);
   Listing.aggregate(
       { $match: {
-        "sec": sec
+        query: { "$regex": search.searchText, "$options": "i" },
+        "sec": search.section,
+        price: priceObj,
+        "ebaySellPrice.avg": {$exists: true},
+        ignore: false
       }}, // your find query
       { $project: {
           clId: 1,
           price: 1,
           ebaySellPrice: 1,
-          ratio: { $divide: ['$ebaySellPrice.avg', '$price'] } // calculated field
+          ratio: { $divide: ['$ebaySellPrice.avg', '$price'] }, // calculated field
+          profit: { $subtract: ['$price', '$ebaySellPrice.avg']}
       } },
-      { $sort: { ratio: -1 } },
-      { $limit: 80 },
+      { $sort: { profit: 1 } },
+      { $limit: 40 },
 
       // And then the normal Mongoose stuff:
       function (err, res) {
-        // logFn(res)
-        // logFn(err);
 
+        // console.log(res)
+        // console.log()
+        // console.log()
+        // logFn(err);
 
         //
         async.mapSeries(res, function(partialListing, cb) {
           Listing.findById(partialListing._id, function(err, res) {
-            cb(null, Object.assign(res.toObject(), {
-                ratio: res.ebaySellPrice.avg / res.price
-            }));
+            // console.log(res.toObject(), '\n')
+            cb(null, res.toObject());
           });
         }, function(err, results) {
           // logFn(results)
-          callback(results);
+          var withProfitRatio = addProfitAndRatioToListingsArr(results).filter(function(listing) {
+            return parseInt(listing.ebaySellPrice.avg) > parseInt(listing.price);
+          });
+
+          // console.log(withProfitRatio);
+          callback(withProfitRatio);
         });
 
       }
@@ -67,7 +86,7 @@ function getAllClUrlsForSearch (params, callback, logFn) {
     if (params.max_price) requestUrl += '&max_price=' + params.max_price;
     if (params.query) requestUrl += '&query=' + encodeURIComponent(params.query);
 
-    logFn('searching ' + requestUrl);
+    logFn('Getting cl posts from ' + requestUrl);
     throttledRequest(requestUrl, function (error, response, html) {
 
       if (!error && response.statusCode == 200) {
@@ -96,7 +115,8 @@ function getAllClUrlsForSearch (params, callback, logFn) {
             title: $(this).children('span').text(),
             url: 'http://sfbay.craigslist.org' + urlPath,
             clId: Number($(this).data('id')),
-            sec: params.section
+            sec: params.section,
+            query: params.query
           };
 
           allListings.push(obj);
@@ -120,9 +140,8 @@ function getAllClUrlsForSearch (params, callback, logFn) {
         }, function() {
 
           var moveOnOrEnd = function() {
-            if (x === params.numPages) {
+            if (responseData === params.numPages) {
               // finished
-              logFn('res', responseData);
               callback(responseData);
             } else {
               // move to next page
@@ -153,6 +172,7 @@ function getAllClUrlsForSearch (params, callback, logFn) {
 
       } else {
         logFn('error: ' + JSON.stringify(error), response);
+        callback([]);
       }
     });
 
@@ -211,6 +231,9 @@ var getListingDetails = function(url, cb, logFn) {
         cb(details);
       });
 
+    } else {
+      // error
+      cb({});
     }
   });
 };
@@ -239,7 +262,9 @@ function getAlleBayPricesForThoseWithMakeOrModel(callback, logFn) {
     ]
   }, function(err, res) {
 
-    thoseWithMakeOrModel = res;
+    thoseWithMakeOrModel = res.filter(function(listing) {
+      return (listing.make && listing.make.length > 1) || (listing.model && listing.model.length > 1)
+    });
 
     if (thoseWithMakeOrModel) {
       logFn('...');
@@ -256,17 +281,13 @@ function getAlleBayPricesForThoseWithMakeOrModel(callback, logFn) {
 
           makeCount++;
 
-          var avg = (ebayResults) ? Math.round(ebayResults.avg * 100) / 100 : 0;
           logFn(makeCount + ' / ' + thoseWithMakeOrModel.length);
           logFn(searchQuery);
-          logFn('ebay: ' + avg);
+          logFn('ebay: ' + ebayResults.avg);
           logFn('selling on cl at ' + listing.price);
           logFn('');
           var ebayObj = {
-            ebaySellPrice: {
-              avg: avg,
-              priceList: (ebayResults) ? ebayResults.priceList : []
-            }
+            ebaySellPrice: ebayResults
           };
           Listing.update({
             clId: listing.clId
@@ -283,11 +304,7 @@ function getAlleBayPricesForThoseWithMakeOrModel(callback, logFn) {
         });
 
       }, function() {
-        callback(theBestDeals.map(function(deal) {
-          return Object.assign(deal.toObject(), {
-              ratio: deal.ebaySellPrice.avg / deal.price
-          });
-        }));
+        callback(addProfitAndRatioToListingsArr(theBestDeals));
       });
 
     } else {
@@ -298,10 +315,26 @@ function getAlleBayPricesForThoseWithMakeOrModel(callback, logFn) {
   });
 }
 
+function addProfitAndRatioToListingsArr(listings) {
+  return listings.map(function(deal) {      // ADD PROFIT AND RATIO
+    if (deal.price === 0) return deal;
+    return Object.assign(deal, {
+        ratio: Math.round(deal.ebaySellPrice.avg / deal.price * 100) / 100,
+        profit: Math.round((deal.ebaySellPrice.avg - deal.price) * 100) / 100
+    });
+  }).map(function(listing) {                // ORDER BY PROFIT * RATIO
+    return Object.assign(listing, {
+      profitTimesRatio: listing.profit * listing.ratio
+    });
+  }).sort(function(a, b) {
+    return parseFloat(b.profitTimesRatio) - parseFloat(a.profitTimesRatio);
+  });;
+}
 
 module.exports = {
   getBestDealsInSection: getBestDealsInSection,
   getAllClUrlsForSearch: getAllClUrlsForSearch,
   getListingDetails: getListingDetails,
-  getAlleBayPricesForThoseWithMakeOrModel: getAlleBayPricesForThoseWithMakeOrModel
+  getAlleBayPricesForThoseWithMakeOrModel: getAlleBayPricesForThoseWithMakeOrModel,
+  addProfitAndRatioToListingsArr: addProfitAndRatioToListingsArr
 };

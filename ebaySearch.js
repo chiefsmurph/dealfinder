@@ -6,8 +6,13 @@ var throttledRequest = require('./throttledRequest');
 
 var maxPageSearch = 3;
 
-function getPrices(searchQuery, sellPrice, cb) {
-  console.log('Searching for completed eBay listings for... "' + searchQuery + '" with expected sell price of ' + sellPrice);
+function getPrices(searchQuery, sellPrice, cb, logFn) {
+
+  logFn = logFn || function(s) {
+    console.logFn(s);
+  };
+
+  logFn('Searching for completed eBay listings for... "' + searchQuery + '" with expected sell price of ' + sellPrice);
   var allSellPrices = [];
   var minSellPrice = sellPrice*.5;
 
@@ -15,20 +20,20 @@ function getPrices(searchQuery, sellPrice, cb) {
 
     //var outlierFree = dataFilters.removeOutsideSD(removeExtremes(allSellPrices));
     var outlierFree = allSellPrices;
-    // console.log('removed ' + (allSellPrices.length - outlierFree.length) + ' from the sell prices');
+    // logFn('removed ' + (allSellPrices.length - outlierFree.length) + ' from the sell prices');
 
-    console.log();
+    // logFn();
     if (outlierFree.length) {
       var sum = outlierFree.reduce(function(a, b) { return a + b; });
-      var avg = sum / outlierFree.length;
-      // console.log(JSON.stringify(outlierFree));
-      // console.log('Average Sell Price: $' + avg);
+      var avg = Math.round(sum / outlierFree.length * 100) / 100;
+      //logFn(JSON.stringify(outlierFree));
+      logFn('Average Sell Price: $' + avg);
       if (cb) cb({
         avg: avg,
         priceList: outlierFree
       });
     } else {
-      // console.log('No sells found.')
+      logFn('--- No sells found.')
       if (cb) cb(null);
     }
 
@@ -37,7 +42,7 @@ function getPrices(searchQuery, sellPrice, cb) {
 
   var getPricesForPageX = function(num) {
     var requestURL = 'http://www.ebay.com/sch/i.html?_from=R40&_sacat=0&LH_Complete=1&LH_Sold=1&_nkw=' + encodeURIComponent(searchQuery) + '&_udlo=' + minSellPrice + '&_pgn=' + num + '&_skc=100&rt=nc';
-    //console.log(requestURL);
+    //logFn(requestURL);
 
     throttledRequest(requestURL, function (error, response, html) {
       if (!error && response.statusCode == 200) {
@@ -69,15 +74,18 @@ function getPrices(searchQuery, sellPrice, cb) {
         }
 
 
-        // console.log('found ' + foundItems + ' sold on page ' + num);
+        // logFn('found ' + foundItems + ' sold on page ' + num);
 
         if (foundItems && num < maxPageSearch && !forceEnd) {
           // RECURSIVE!!!
           getPricesForPageX(num+1);
         } else {
-          // console.log('finished on page ' + num);
+          // logFn('finished on page ' + num);
           finishedSearching();
         }
+      } else {
+        // if err force end
+        finishedSearching();
       }
     });
 
@@ -89,9 +97,9 @@ function getPrices(searchQuery, sellPrice, cb) {
 
 var sellPrice = 0;
 var args = process.argv.slice(2);
-// console.log(JSON.stringify(args));
+// logFn(JSON.stringify(args));
 var lastArg = args.splice(-1, 1)[0];
-// console.log(lastArg);
+// logFn(lastArg);
 //
 // getPrices(args.join(' '), lastArg);
 

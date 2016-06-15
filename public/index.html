@@ -45,6 +45,9 @@
     bottom: 0;
     overflow: scroll;
   }
+  #content h2 {
+    text-decoration: underline;
+  }
   .pic {
     float: left;
     margin-right: 10px;
@@ -82,11 +85,42 @@
   #searchPanel input[type="submit"] {
     zoom: 200%;
   }
+  #urlViewer {
+    position: absolute;
+    top: 5%;
+    left: 5%;
+    bottom: 5%;
+    right: 5%;
+    display: none;
+  }
+  #urlViewer iframe {
+    width: 95%;
+    height: 95%;
+  }
+  .updown {
+    float: left;
+    width: 100px;
+  }
+  .updown i {
+    width: 70px;
+    height: 60px;
+    display: block;
+  }
   </style>
   <script>
   if (!Date.now) {
       Date.now = function() { return new Date().getTime(); }
   }
+
+  function viewUrl (url) {
+    // $('#urlViewer').show();
+    // $('#urlViewer iframe').attr('src', url);
+    window.open(url);
+  }
+
+  var price = function(num) {
+    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  };
 
   function displayListings (res, header) {
     console.log(res, header);
@@ -100,18 +134,26 @@
     }
 
     res.forEach(function(listing) {
-      displayText += "<div class='listing'>"
+      displayText += "<div class='listing' data-clid='" + listing.clId + "'>";
+      displayText += "<div class='updown'><i class='fa fa-arrow-up fa-fw'>UP</i><i class='fa fa-times fa-fw'>IGNORE</i></div>";
       if (listing.pics.length) {
         displayText += '<img src="' + listing.pics[0] + '" class="pic">'
       }
-      for (var key in listing) {
-        if (key != "price" && listing[key] && typeof listing[key] != "object") {
-          displayText += listing[key] + '<br>';
+      ['title', 'url', 'make', 'model'].forEach(function(key) {
+        if (listing[key]) {
+          displayText += ( (listing[key].indexOf('http') !== -1) ? '<a href="javascript:viewUrl(\'' + listing[key] + '\')">' + listing[key] + '</a>' : listing[key]) + '<br>';
         }
-      }
-      displayText += "selling on cl for " + listing.price;
+      });
+
+      displayText += "selling on cl for $" + price(listing.price);
+
+
+      var ebayQuery = (listing.make + ' ' + listing.model).trim();
+      var minSellPrice = listing.price*.5;
+      var ebayUrl = 'http://www.ebay.com/sch/i.html?_from=R40&_sacat=0&LH_Complete=1&LH_Sold=1&_nkw=' + encodeURIComponent(ebayQuery) + '&_udlo=' + minSellPrice + '&_skc=100&rt=nc';
       if (listing.ebaySellPrice && listing.ebaySellPrice.avg) {
-        displayText += ' and on ebay for ' + listing.ebaySellPrice.avg;
+        displayText += ' and on ebay for <a href="javascript:viewUrl(\'' +ebayUrl+ '\')">$' + price(listing.ebaySellPrice.avg) + '</a><br>';
+        displayText += 'potential profit: $' + price(listing.profit);
       }
       displayText += '</div>';
     });
@@ -131,6 +173,7 @@
     });
 
     socket.on('info', function(data) {
+      data = data || '';
       $('textarea').append(data + '\n');
       $('textarea').scrollTop($('textarea')[0].scrollHeight);
     });
@@ -139,7 +182,7 @@
       var doIt = function() {
         displayListings(data, 'here are the best listings we found for that search...');
       };
-      if ($('#searchPanel').is(":visible")) {
+      if ($('#searchPanel').is(":visible") && data.length) {
         setTimeout(function() {
           $('#searchPanel').fadeOut('slow', doIt);
         }, 1000);
@@ -148,26 +191,39 @@
       }
     });
 
-    $('#category').on('change', function() {
+    $('#category').on('input', function() {
       var section = $(this).val();
       console.log('getting best deals in ' + section);
-      socket.emit('getBestDealsInSection', section);
+      socket.emit('getBestDealsInSection', {
+        section: section,
+        searchText: $('#searchText').val(),
+        min: parseInt($('#min').val()),
+        max: parseInt($('#max').val())
+      });
     });
 
     $('#searchButton').on('click', function() {
-      $('#searchPanel').show();
+      $('#searchPanel').toggle();
     });
 
     $('#startsearchbtn').on('click', function() {
       var queryParams = {
         query: $('#querystring').val(),
         section: $('#searchCat').val(),
-        min_price: parseInt($('#min').val()),
-        max_price: parseInt($('#max').val()),
+        min_price: parseInt($('#min_price').val()),
+        max_price: parseInt($('#max_price').val()),
         numPages: parseInt($('#numPages').val())
       };
       socket.emit('queryCl', queryParams);
       console.log(queryParams);
+    });
+
+    $('body').on('click', '.fa-times', function() {
+      var clid = $(this).parent().parent().data('clid')
+      socket.emit('ignore', {
+        clId: clid
+      });
+      $(this).parent().parent().fadeOut();
     });
 
   });
@@ -177,6 +233,10 @@
 <body>
   <div id="container">
     <div id="topBar">
+
+      <input type="text" id="min" placeholder="min" size="5">
+      <input type="text" id="max" placeholder="max" size="5"><br>
+      <input type="text" id="searchText" placeholder="search string">
 
       <select id="category">
         <option value='---'>---</option>
@@ -296,11 +356,11 @@
       </tr>
       <tr>
         <td>Min</td>
-        <td><input type="text" id="min"></td>
+        <td><input type="text" id="min_price"></td>
       </tr>
       <tr>
         <td>Max</td>
-        <td><input type="text" id="max"></td>
+        <td><input type="text" id="max_price"></td>
       </tr>
       <tr>
         <td>Num Pages</td>
@@ -309,8 +369,13 @@
     </table>
     <textarea></textarea>
   </div>
+
+  <div id='urlViewer'>
+    <div id="exit">X</div>
+    <iframe></iframe>
+  </div>
   <!-- javascript includes -->
-  <script src="https://cdn.socket.io/socket.io-1.3.5.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
+  <script src="/scripts/socket.io-1.3.5.js"></script>
+  <script src="/scripts/jquery.min.js"></script>
 </body>
 </html>
