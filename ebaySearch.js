@@ -6,11 +6,17 @@ var throttledRequest = require('./throttledRequest');
 
 var maxPageSearch = 3;
 
-function getPrices(searchQuery, sellPrice, cb, logFn) {
+function getPrices(searchQuery, sellPrice, cb, logFn, sec) {
 
   logFn = logFn || function(s) {
     console.logFn(s);
   };
+
+  if (searchQuery.indexOf('undefined') !== -1) {
+    logFn('overload ... undefined')
+    if (cb) cb(null);
+    return;
+  }
 
   logFn('Searching for completed eBay listings for... "' + searchQuery + '" with expected sell price of ' + sellPrice);
   var allSellPrices = [];
@@ -41,8 +47,10 @@ function getPrices(searchQuery, sellPrice, cb, logFn) {
   }
 
   var getPricesForPageX = function(num) {
-    var requestURL = 'http://www.ebay.com/sch/i.html?_from=R40&_sacat=0&LH_Complete=1&LH_Sold=1&_nkw=' + encodeURIComponent(searchQuery) + '&_udlo=' + minSellPrice + '&_pgn=' + num + '&_skc=100&rt=nc';
-    //logFn(requestURL);
+    var insertSec = (sec === "cta") ? 'Cars-Trucks/6001/' : '';
+
+    var requestURL = 'http://www.ebay.com/sch/' +insertSec+ 'i.html?_from=R40&_sacat=0&LH_Complete=1&LH_Sold=1&_nkw=' + encodeURIComponent(searchQuery) + '&_udlo=' + minSellPrice + '&_pgn=' + num + '&_skc=100&rt=nc';
+    logFn(requestURL);
 
     throttledRequest(requestURL, function (error, response, html) {
       if (!error && response.statusCode == 200) {

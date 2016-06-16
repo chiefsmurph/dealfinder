@@ -62,7 +62,7 @@
   #searchPanel {
     display: none;
     position: absolute;
-    top: 15%;
+    top: 12%;
     left: 15%;
     width: 70%;
     padding-bottom: 5px;
@@ -71,16 +71,32 @@
     text-align: center;
     border-radius: 5px 5px 0 0;
   }
-  #searchPanel td {
+  #searchPanel select {
+    border: 1px solid grey;
+    margin: 2px auto;
+  }
+  #searchPanel input:not([disabled]):not([type="submit"]), #searchPanel select:not([disabled]) {
+    border: 1px solid black;
     padding: 3px;
+    margin: 2px 3px;
+  }
+  #searchPanel input[type="checkbox"] {
+    margin-right: 8px !important;
+  }
+  #searchPanel td {
+    padding: 3px 10px;
+  }
+  #searchPanel tr td:nth-child(3) {
+    padding-left: 3%;
   }
   #searchPanel table {
-    width: 100%
+    width: 100%;
   }
   #searchPanel textarea {
     width: 99%;
-    height: 400px;
+    height: 43vh;
     margin: auto;
+    resize: vertical;
   }
   #searchPanel input[type="submit"] {
     zoom: 200%;
@@ -106,8 +122,35 @@
     height: 60px;
     display: block;
   }
+
+
+  table {
+    border-collapse: collapse;
+  }
+  table td, table th {
+    border: 1px solid black;
+  }
+  table tr:first-child td {
+    border-top: 0;
+  }
+  table td[rowspan="2"] {
+    border-bottom: 0;
+    text-align: center;
+  }
+  table tr:last-child td {
+    border-bottom: 0;
+  }
+  table tr td:first-child,
+  table tr th:first-child {
+    border-left: 0;
+  }
+  table tr td:last-child,
+  table tr th:last-child {
+    border-right: 0;
+  }
   </style>
   <script>
+  var socket;
   if (!Date.now) {
       Date.now = function() { return new Date().getTime(); }
   }
@@ -116,6 +159,13 @@
     // $('#urlViewer').show();
     // $('#urlViewer iframe').attr('src', url);
     window.open(url);
+  }
+
+  function ignoreListing (clId) {
+    socket.emit('ignore', {
+      clId: clId
+    });
+    $('.listing[data-clid="' + clId + '"').fadeOut();
   }
 
   var price = function(num) {
@@ -135,7 +185,7 @@
 
     res.forEach(function(listing) {
       displayText += "<div class='listing' data-clid='" + listing.clId + "'>";
-      displayText += "<div class='updown'><i class='fa fa-arrow-up fa-fw'>UP</i><i class='fa fa-times fa-fw'>IGNORE</i></div>";
+      displayText += "<div class='updown'><a href='javascript:ignoreListing(" +listing.clId+ ")' class='ignorelink'><i class='fa fa-times fa-fw'>IGNORE</i></a></div>";
       if (listing.pics.length) {
         displayText += '<img src="' + listing.pics[0] + '" class="pic">'
       }
@@ -165,7 +215,7 @@
   r(function(){
 
     // ready
-    var socket = io.connect(window.location.hostname + ":" + window.location.port);
+    socket = io.connect(window.location.hostname + ":" + window.location.port);
     socket.on('bestDealsInSection', function(data) {
       // alert(JSON.stringify(res));
       console.log('received best deals in section ')
@@ -191,6 +241,30 @@
       }
     });
 
+    socket.on('newCRON', function(id) {
+      console.log('watching cron ', id);
+      var curCrons = JSON.parse(docCookies.getItem('crons')) || [];
+      curCrons.push(id);
+      docCookies.setItem('crons', JSON.stringify(curCrons));
+    });
+
+    socket.on('start', function(params) {
+      $('#querystring').val(params.query);
+      $('#searchCat').val(params.section);
+      $('#min_price').val(params.min_price);
+      $('#max').val(params.max_price);
+      $('#maxListings').val(params.maxListings);
+      $('#maxDays').val(params.maxDays);
+
+      if (params.cron) {
+        $('#enablecron').attr('checked', params.cron.enabled);
+        $('#numCRON').val(params.cron.numCRON);
+        $('#cronIncrement').val(params.cron.cronIncrement);
+      }
+      $('#searchPanel').show();
+      setDisableCron((params.cron.enabled) ? false : 'disabled');
+    });
+
     $('#category').on('input', function() {
       var section = $(this).val();
       console.log('getting best deals in ' + section);
@@ -212,19 +286,32 @@
         section: $('#searchCat').val(),
         min_price: parseInt($('#min_price').val()),
         max_price: parseInt($('#max_price').val()),
-        numPages: parseInt($('#numPages').val())
+        maxListings: parseInt($('#maxListings').val()),
+        maxDays: parseInt($('#maxDays').val()),
+        cron: {
+          enabled: $('#enablecron').is(':checked'),
+          numCRON: $('#numCRON').val(),
+          cronIncrement: $('#cronIncrement').val()
+        }
       };
       socket.emit('queryCl', queryParams);
       console.log(queryParams);
     });
 
-    $('body').on('click', '.fa-times', function() {
-      var clid = $(this).parent().parent().data('clid')
-      socket.emit('ignore', {
-        clId: clid
-      });
-      $(this).parent().parent().fadeOut();
+    $('#enablecron').on('change', function() {
+      var disabled = ($(this).is(':checked')) ? false : 'disabled';
+      setDisableCron(disabled);
     });
+
+    var setDisableCron = function(disabled) {
+      $('#cronIncrement').prop('disabled', disabled);
+      $('#numCRON').prop('disabled', disabled);
+    }
+
+    if (docCookies.hasItem('crons')) {
+      var curCrons = JSON.parse(docCookies.getItem('crons')) || [];
+      socket.emit('joinCRONS', curCrons);
+    }
 
   });
 
@@ -294,14 +381,25 @@
 
   <div id='searchPanel'>
 
-    <table>
+    <table cellspacing="0">
       <tr>
         <td>Querystring</td>
         <td><input type="text" id="querystring"></td>
+        <td>
+          Max age:
+          <select id="maxDays">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+          </select>
+          days
+        </td>
       </tr>
       <tr>
-        <td width="30%">Section</td>
-        <td width="40%">
+        <td width="27%">Section</td>
+        <td width="30%">
           <select id="searchCat">
             <option value='---'>---</option>
             <option value="sss">all</option>
@@ -350,21 +448,43 @@
             <option value="waa">wanted</option>
           </select>
         </td>
-        <td rowspan="4">
-          <input type="submit" value="start search!" id="startsearchbtn">
+        <td>
+          <input type="checkbox" id="enablecron">Enable CRON job
         </td>
       </tr>
       <tr>
         <td>Min</td>
         <td><input type="text" id="min_price"></td>
+        <td>
+          Run every...
+          <select id="numCRON" disabled>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="10">10</option>
+            <option value="30">30</option>
+            <option value="60">60</option>
+          </select>
+          <select id="cronIncrement" disabled>
+            <option value="minutes">minutes</option>
+            <option value="hours">hours</option>
+            <option value="days">days</option>
+          </select>
+
+        </td>
       </tr>
       <tr>
         <td>Max</td>
         <td><input type="text" id="max_price"></td>
+        <td rowspan="2">
+          <input type="submit" value="start search!" id="startsearchbtn">
+        </td>
       </tr>
       <tr>
-        <td>Num Pages</td>
-        <td><input type="range" min="1" max="7" value="1" id="numPages"></td>
+        <td>Max Listings</td>
+        <td><input type="range" min="1" max="100" value="10" id="maxListings"></td>
       </tr>
     </table>
     <textarea></textarea>
@@ -377,5 +497,6 @@
   <!-- javascript includes -->
   <script src="/scripts/socket.io-1.3.5.js"></script>
   <script src="/scripts/jquery.min.js"></script>
+  <script src="/scripts/cookies.js"></script>
 </body>
 </html>

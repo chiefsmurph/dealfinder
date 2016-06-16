@@ -9,6 +9,7 @@ var listingSchema = new mongoose.Schema({
   sec: String,
   pics: [String],
   query: String,
+  postDate: Date,
   ignore: {
     type: Boolean,
     default: false

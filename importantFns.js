@@ -1,7 +1,9 @@
 var async = require('async');
+var shortid = require('shortid');
+var cheerio = require('cheerio');
+
 var Listing = require('./models/listing');
 var throttledRequest = require('./throttledRequest');
-var cheerio = require('cheerio');
 var ebaySearch = require('./ebaySearch');
 
 var saveAll = function( array, cb) {
@@ -9,7 +11,7 @@ var saveAll = function( array, cb) {
 };
 
 throttledRequest('http://www.craigslist.org/', function(err, response, html) {
-  console.log(err, html);
+  if (err) console.log(err, html);
 });
 
 function getBestDealsInSection(search, callback) {
@@ -77,6 +79,8 @@ function getAllClUrlsForSearch (params, callback, logFn) {
 
   var responseData = [];
 
+  logFn('--------------------------------------------');
+
   var getPage = function(x) {
 
     // logFn('checking out page ' + x);
@@ -86,9 +90,8 @@ function getAllClUrlsForSearch (params, callback, logFn) {
     if (params.max_price) requestUrl += '&max_price=' + params.max_price;
     if (params.query) requestUrl += '&query=' + encodeURIComponent(params.query);
 
-    logFn('Getting cl posts from ' + requestUrl);
+    logFn('Getting CL posts from ' + requestUrl);
     throttledRequest(requestUrl, function (error, response, html) {
-
       if (!error && response.statusCode == 200) {
         var $ = cheerio.load(html);
         var allListings = [];
@@ -112,12 +115,15 @@ function getAllClUrlsForSearch (params, callback, logFn) {
           }
 
           var obj = {
-            title: $(this).children('span').text(),
+            title: $el.children('span').text(),
             url: 'http://sfbay.craigslist.org' + urlPath,
-            clId: Number($(this).data('id')),
+            clId: Number($el.data('id')),
+            postDate: new Date($el.prev().text()),
             sec: params.section,
             query: params.query
           };
+
+          //console.log(obj, $el.prev().text());
 
           allListings.push(obj);
 
@@ -139,8 +145,28 @@ function getAllClUrlsForSearch (params, callback, logFn) {
 
         }, function() {
 
+          // check to see if you are on the last page of results for that cl query
+          var foundAllListingsForQuery = (iterateListings.length === 100 && !$('.next').length);  // no more listings
+          responseData = responseData.slice(0, params.maxListings);
+
+          // cut out the results that are past the maxDays
+          var oneDay = 24*60*60*1000; // hours*minutes*seconds*milliseconds
+          var nowDate = new Date();
+          var hitEndOfListings = false;
+          var i = responseData.length;
+          while (i--) {
+            var listing = responseData[i];
+            listing.postDate.setYear(nowDate.getFullYear());
+
+            var diffDays = Math.round(Math.abs((listing.postDate.getTime() - nowDate.getTime())/(oneDay)));
+            if (diffDays > params.maxDays) {  // make sure
+              responseData.splice(i, 1);
+              hitEndOfListings = true;
+            }
+          }
+
           var moveOnOrEnd = function() {
-            if (responseData === params.numPages) {
+            if (responseData.length === params.maxListings || foundAllListingsForQuery || hitEndOfListings) {
               // finished
               callback(responseData);
             } else {
@@ -242,7 +268,7 @@ function getAlleBayPricesForThoseWithMakeOrModel(callback, logFn) {
 
   var theBestDeals = [];
   logFn = logFn || function(s) {
-    console.logFn(s);
+    console.log(s);
   };
 
   // find all listings where the make and model are set and the ebay price has not been calculated
@@ -263,7 +289,8 @@ function getAlleBayPricesForThoseWithMakeOrModel(callback, logFn) {
   }, function(err, res) {
 
     thoseWithMakeOrModel = res.filter(function(listing) {
-      return (listing.make && listing.make.length > 1) || (listing.model && listing.model.length > 1)
+      return ((listing.make && listing.make.length > 1 && listing.make.indexOf('undefined') === -1) ||
+        (listing.model && listing.model.length > 1 && listing.model.indexOf('undefined') === -1));
     });
 
     if (thoseWithMakeOrModel) {
@@ -331,10 +358,140 @@ function addProfitAndRatioToListingsArr(listings) {
   });;
 }
 
+function fullQuery(params, conn, cb) {
+  var emit = function(evt, obj) {
+    if (conn.socket)
+      conn.socket.emit(evt, obj);
+  };
+  var log = function(s) {
+    console.log(s);
+    emit('info', s);
+  };
+  emit('start', params);
+  getAllClUrlsForSearch(params, function(results) {
+    // done
+    //console.log(results);
+    log('Completed: found ' + results.length + ' results\n');
+    log('--------------------------------------------');
+
+    var listingCount = 0;
+    var theBestDeals = [];
+
+    async.forEachSeries(results, function(listing, detailCallback) {
+      listingCount++;
+      log('\nGetting details for listing ' + listingCount + ' of ' + results.length + ': ' + listing.title);
+      getListingDetails(listing.url, function(deepListing) {
+
+        deepListing = Object.assign(deepListing, listing);
+
+        var searchQuery = (deepListing.make === deepListing.model) ? (deepListing.make + ' ' + deepListing.model).trim() : deepListing.make;
+        if (searchQuery.indexOf('condition') !== -1) {
+          searchQuery = deepListing.name;
+        }
+        if (!searchQuery.length) {
+          searchQuery = deepListing.title.split(' ').slice(0, 4).join(' ');
+        }
+        if (searchQuery.length) {
+          ebaySearch.getPrices(searchQuery, deepListing.price, function(ebayResults) {
+
+            // console.log('ebay results');
+            // console.log(ebayResults);
+            // update listing in db
+            var ebayObj = {
+              ebaySellPrice: ebayResults
+            };
+
+            Listing.update({
+              clId: listing.clId
+            }, ebayObj, function(err) {
+              if (err) throw err;
+              try {
+                detailCallback();
+              } catch (e) {
+                console.log('no worries error')
+                console.log(e);
+              }
+            });
+
+            // make considerations for the best deals
+            if (ebayResults && ebayResults.avg) {
+              var perc = ebayResults.avg / deepListing.price;
+            }
+
+            if ( perc >  1.1 ) {
+              log('*** HOT HOT HOT ***')
+              var obj = Object.assign(deepListing, ebayObj);
+              theBestDeals.push(obj);
+            }
+
+
+          }, log, params.section);
+        } else {
+          log('--- couldnt find make / model...skipping ebay');
+          try {
+            detailCallback();
+          } catch (e) {
+            console.log('no worries error')
+            console.log(e);
+          }
+        }
+
+
+      }, log);
+    }, function() {
+
+      emit('theBestDeals', addProfitAndRatioToListingsArr(theBestDeals));
+      log('\nDone searching... found ' + theBestDeals.length + ' hot deals!\n');
+      // getAlleBayPricesForThoseWithMakeOrModel(function(theBestDeals) {
+      //   console.log('best deals', theBestDeals);
+      //   socket.emit('theBestDeals', theBestDeals);
+      // }, log);
+      cb();
+    });
+
+
+
+  }, log);
+}
+
+function checkForCRON(params, conn, io) {
+
+  if (params.cron && params.cron.enabled) {
+
+    // CREATE NEW CRON
+
+    var cronINC = {
+      'minutes': 1000 * 60,
+      'hours': 1000 * 60 * 60,
+      'days': 1000 * 60 * 60 * 24
+    };
+
+    var timeoutTime = cronINC[params.cron.cronIncrement] * params.cron.numCRON;
+    console.log('running again in ' + timeoutTime + 'ms');
+
+    if (!conn.roomName) {
+      // for establishing future connections when searching
+      var newId = shortid.generate();
+      conn.socket.join(newId);
+      conn.socket.emit('newCRON', newId);
+      conn.roomName = newId;
+    }
+
+    var intervalId = setTimeout(function() {
+      fullQuery(params, {socket: conn.io.to(conn.roomName)}, function() {
+        checkForCRON(params, {roomName: conn.roomName, io: conn.io});
+      });
+    }, timeoutTime);
+
+  }
+}
+
 module.exports = {
   getBestDealsInSection: getBestDealsInSection,
   getAllClUrlsForSearch: getAllClUrlsForSearch,
   getListingDetails: getListingDetails,
   getAlleBayPricesForThoseWithMakeOrModel: getAlleBayPricesForThoseWithMakeOrModel,
-  addProfitAndRatioToListingsArr: addProfitAndRatioToListingsArr
+  addProfitAndRatioToListingsArr: addProfitAndRatioToListingsArr,
+  fullQuery: fullQuery,
+  checkForCRON, checkForCRON
 };
