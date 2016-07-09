@@ -21,7 +21,9 @@
     "async": "^1.5.2",
     "cheerio": "^0.20.0",
     "express": "^4.13.4",
+    "hma-proxy-scraper": "0.0.4",
     "mongoose": "^4.4.20",
+    "nodemailer": "^2.4.2",
     "request": "^2.72.0",
     "shortid": "^2.2.6"
   }

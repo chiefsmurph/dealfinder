@@ -1,3 +1,4 @@
 node_modules
 wee*
 public/scripts
+nodeMailerConnectionString.js

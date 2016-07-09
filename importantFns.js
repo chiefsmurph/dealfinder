@@ -2,9 +2,18 @@ var async = require('async');
 var shortid = require('shortid');
 var cheerio = require('cheerio');
 
+var nodemailer = require("nodemailer");
+var transporter = nodemailer.createTransport(require('./nodeMailerConnectionString'));
+
 var Listing = require('./models/listing');
+var CronSearch = require('./models/cronSearch');
+
 var throttledRequest = require('./throttledRequest');
 var ebaySearch = require('./ebaySearch');
+var displayListings = require('./public/displayListings');
+var shuffleArray = require('./shuffleArray');
+
+var cronTimeoutIds = {};
 
 var saveAll = function( array, cb) {
   Listing.insertMany(array, cb);
@@ -19,13 +28,21 @@ function getBestDealsInSection(search, callback) {
   priceObj['$gt'] = search.min || 1;
   if (search.max) priceObj['$lt'] = search.max;
   console.log(priceObj);
+
+  var oneDay = 24*60*60*1000; // hours*minutes*seconds*milliseconds
+  var nowDate = new Date();
+  var dateToStart = new Date();
+  dateToStart.setTime(nowDate.getTime() - oneDay * search.maxAge);
+  console.log(dateToStart, search.maxAge);
+
   Listing.aggregate(
       { $match: {
         query: { "$regex": search.searchText, "$options": "i" },
         "sec": search.section,
         price: priceObj,
         "ebaySellPrice.avg": {$exists: true},
-        ignore: false
+        ignore: false,
+        postDate: {"$gte": dateToStart }
       }}, // your find query
       { $project: {
           clId: 1,
@@ -75,7 +92,6 @@ function getAllClUrlsForSearch (params, callback, logFn) {
 
   if (!params.section) params.section = 'sss';
   if (!params.sortBy) params.sortBy = 'date';
-  if (!params.numPages) params.numPages = 5;
 
   var responseData = [];
 
@@ -85,7 +101,7 @@ function getAllClUrlsForSearch (params, callback, logFn) {
 
     // logFn('checking out page ' + x);
 
-    var requestUrl = 'http://sfbay.craigslist.org/search/' + params.section + '?s=' + (x-1)*100 + '&sort=' + params.sortBy;
+    var requestUrl = 'http://sfbayarea.craigslist.org/search/' + params.section + '?s=' + (x-1)*100 + '&sort=' + params.sortBy + '';
     if (params.min_price) requestUrl += '&min_price=' + params.min_price;
     if (params.max_price) requestUrl += '&max_price=' + params.max_price;
     if (params.query) requestUrl += '&query=' + encodeURIComponent(params.query);
@@ -197,7 +213,7 @@ function getAllClUrlsForSearch (params, callback, logFn) {
         });
 
       } else {
-        logFn('error: ' + JSON.stringify(error), response);
+        logFn('error: ' + JSON.stringify(error), response, html, error);
         callback([]);
       }
     });
@@ -371,11 +387,14 @@ function fullQuery(params, conn, cb) {
   getAllClUrlsForSearch(params, function(results) {
     // done
     //console.log(results);
-    log('Completed: found ' + results.length + ' results\n');
+    log('Completed: found ' + results.length + ' results');
     log('--------------------------------------------');
 
     var listingCount = 0;
     var theBestDeals = [];
+
+    // randomize the order
+    shuffleArray(results);
 
     async.forEachSeries(results, function(listing, detailCallback) {
       listingCount++;
@@ -440,12 +459,39 @@ function fullQuery(params, conn, cb) {
       }, log);
     }, function() {
 
-      emit('theBestDeals', addProfitAndRatioToListingsArr(theBestDeals));
+      var withProfitRatio = addProfitAndRatioToListingsArr(theBestDeals);
+      emit('theBestDeals', withProfitRatio);
       log('\nDone searching... found ' + theBestDeals.length + ' hot deals!\n');
       // getAlleBayPricesForThoseWithMakeOrModel(function(theBestDeals) {
       //   console.log('best deals', theBestDeals);
       //   socket.emit('theBestDeals', theBestDeals);
       // }, log);
+
+      // filter by even higher ratio and then check for the email to be sent
+
+      withProfitRatio = withProfitRatio.filter(function(listing) {
+        return listing.ratio > 1.8;
+      });
+
+      if (withProfitRatio.length) {
+
+        var content = displayListings.convert(withProfitRatio, 'Dealfinder 1.0 found ' + withProfitRatio.length + ' great deals...', true);
+
+        var mailOptions = {
+           to : 'chiefsmurph@gmail.com',
+           subject: 'Dealfinder 1.0: ' + withProfitRatio.length + ' GREAT DEALS',
+           html: content,
+        };
+        // send mail with defined transport object
+        transporter.sendMail(mailOptions, function(error, info){
+            if(error){
+                return console.log(error);
+            }
+            console.log('Message sent: ' + info.response);
+        });
+
+      }
+
       cb();
     });
 
@@ -454,11 +500,9 @@ function fullQuery(params, conn, cb) {
   }, log);
 }
 
-function checkForCRON(params, conn, io) {
+function checkForCRON(params, conn, io, cb) {
 
   if (params.cron && params.cron.enabled) {
-
-    // CREATE NEW CRON
 
     var cronINC = {
       'minutes': 1000 * 60,
@@ -469,20 +513,83 @@ function checkForCRON(params, conn, io) {
     var timeoutTime = cronINC[params.cron.cronIncrement] * params.cron.numCRON;
     console.log('running again in ' + timeoutTime + 'ms');
 
+
+    var createSettimeout = function() {
+
+
+      var intervalId = setTimeout(function() {
+        runSearch(params, {roomName: conn.roomName, io: conn.io});
+      }, timeoutTime);
+
+      cronTimeoutIds[conn.roomName] = intervalId;
+
+      var dateObj = Date.now();
+      dateObj += timeoutTime;
+      dateObj = new Date(dateObj);
+
+      CronSearch.update({
+        socketRoom: conn.roomName
+      }, {
+        nextRun: dateObj
+      }, function(err) {
+        if (err) throw err;
+        console.log('updated cronsearch with nextrun');
+        if (cb) cb();
+      });
+
+    };
+
     if (!conn.roomName) {
-      // for establishing future connections when searching
+      // CREATE NEW CRON -> this is the first time this cron query has been sent
+      // for establishing future connections via socket room ids
       var newId = shortid.generate();
-      conn.socket.join(newId);
-      conn.socket.emit('newCRON', newId);
       conn.roomName = newId;
+
+      new CronSearch({
+        params: params,
+        socketRoom: newId
+      }).save(function(err, res) {
+        if (err) throw err;
+        conn.socket.join(newId);
+        conn.socket.emit('newCRON', newId);
+        createSettimeout();
+      });
+
+    } else {
+      createSettimeout();
     }
 
-    var intervalId = setTimeout(function() {
-      fullQuery(params, {socket: conn.io.to(conn.roomName)}, function() {
-        checkForCRON(params, {roomName: conn.roomName, io: conn.io});
-      });
-    }, timeoutTime);
+  } else {
+    if (cb) cb();
+  }
+}
 
+function cancelCron(id, cb) {
+  // id = socketRoom / roomName
+  clearTimeout(cronTimeoutIds[id]);
+  delete cronTimeoutIds[id];
+  CronSearch.find({socketRoom: id}).remove(cb);
+}
+
+function getAllCRONS(cb) {
+  CronSearch.find({}, function(err, data) {
+    if (err) throw err;
+    cb(data);
+  });
+}
+
+function runSearch(params, conn, cb) {
+  if (params && conn.socket && conn.io) {
+    fullQuery(params, {socket: conn.socket}, function() {
+      checkForCRON(params, {socket: conn.socket, io: conn.io}, cb);
+    });
+  } else if (params && conn.roomName && conn.io) {
+    fullQuery(params, {socket: conn.io.to(conn.roomName)}, function() {
+      checkForCRON(params, {roomName: conn.roomName, io: conn.io}, cb);
+    });
+  } else {
+    console.log('runSearch: must pass in params && conn.io && (conn.socket or conn.roomName)');
+    console.log(params, conn, cb);
   }
 }
 
@@ -493,5 +600,8 @@ module.exports = {
   getAlleBayPricesForThoseWithMakeOrModel: getAlleBayPricesForThoseWithMakeOrModel,
   addProfitAndRatioToListingsArr: addProfitAndRatioToListingsArr,
   fullQuery: fullQuery,
-  checkForCRON, checkForCRON
+  checkForCRON: checkForCRON,
+  getAllCRONS: getAllCRONS,
+  runSearch: runSearch,
+  cancelCron: cancelCron
 };

@@ -23,6 +23,28 @@ app.use(express.static(__dirname + '/public'));
 var cronJobSearches = [];
 
 
+importantFns.getAllCRONS(function(crons) {
+  console.log(crons);
+
+  var needsToRun = [];
+  crons.forEach(function(cron) {
+    if (cron.nextRun < Date.now()) {
+      needsToRun.push(cron);
+    }
+  });
+
+  console.log('needs', needsToRun);
+
+  async.forEachSeries(needsToRun, function(cron, cb) {
+    importantFns.runSearch(cron.params, {roomName: cron.socketRoom, io: io}, function() {
+      console.log('done waiting 1000 then next');
+      setTimeout(cb, 1000);
+    });
+  });
+
+});
+
+
 io.sockets.on('connection', function (socket) {
   console.log('connected socket');
 
@@ -42,10 +64,7 @@ io.sockets.on('connection', function (socket) {
   });
 
   socket.on('queryCl', function(params) {
-    importantFns.fullQuery(params, {socket: socket}, function() {
-      // handle CRONs
-      importantFns.checkForCRON(params, {socket: socket, io: io});
-    });
+    importantFns.runSearch(params, {socket: socket, io: io});
   });
 
   socket.on('ignore', function(data) {
@@ -60,6 +79,15 @@ io.sockets.on('connection', function (socket) {
     arr.forEach(function(cronId) {
       console.log('joined ' + cronId);
       socket.join(cronId);
+    });
+  });
+
+  socket.on('cancelCron', function(id) {
+    console.log('canceling', id);
+    importantFns.cancelCron(id, function(err) {
+      if (!err) {
+        socket.emit('successCancel', id);
+      }
     });
   });
 
